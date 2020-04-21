@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Adds a delay in a local video stream via VLC
+set -e
+
+# defaults
+VLC_SEARCH_DIR=/Applications/VLC.app
+IN_VIDEO=0
+DELAY=${1:-10}
+
+cleanup()
+{
+    kill -9 $1
+}
+
+# ensure ffmpeg and vlc are installed
+which ffmpeg > /dev/null 2>&1 || ( echo "Please ensure ffmpeg is installed" && exit 1 )
+export vlc="$(find $VLC_SEARCH_DIR -name VLC)"
+test -n $vlc || ( echo "Please ensure VLC is installed" && exit 1 )
+
+# fork ffmpeg (start stream)
+ffmpeg -f avfoundation -framerate 30 -i "${IN_VIDEO}:none" -an -target film-dvd -preset ultrafast -tune zerolatency -f rtp rtp://0.0.0.0:1234 > ffmpeg.log 2>&1 &
+trap "cleanup $!" STOP KILL TERM QUIT HUP
+
+# fork vlc (attach to stream with http remote control)
+$vlc --extraintf http -I macosx rtp://@:1234 --http-password=1234 > vlc.log 2>&1 &
+trap "cleanup $!" STOP KILL TERM QUIT HUP
+sleep 2 # allow http server to go up
+
+# pause for specified delay and resume
+curl -s "http://127.0.0.1:8080/requests/status.xml?command=pl_pause" -u :1234 > /dev/null
+sleep $DELAY
+curl -s "http://127.0.0.1:8080/requests/status.xml?command=pl_play" -u :1234 > /dev/null
+
+while : ; do
+    echo "CTRL+C to exit"
+    read input
+done
+
