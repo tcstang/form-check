@@ -1,16 +1,51 @@
 #!/usr/bin/env bash
-# Adds a delay in a local video stream via VLC
-set -e
+# Author: Tim Tang
+# This script adds a delay in a local video stream via VLC
 
-# defaults
+set -eo pipefail
+
+# constants and defaults
 VLC_SEARCH_DIR=/Applications/VLC.app
-IN_VIDEO=0
-DELAY=${1:-10}
+OPT_NO_SOUND=":none"
+DELAY=5
+DEVICE_NAME=""
 
+source functions
 cleanup()
 {
     kill -9 $1
 }
+
+usage()
+{
+    echo "Usage: $0 [-l] [-d <delay_in_seconds>] [-t <name_of_camera>]" >&2 && exit 1
+}
+
+# set up 
+while getopts ":ld:t:" opt; do
+    case ${opt} in
+        l)
+            list_devices
+            exit 0
+            ;;
+        d)
+            DELAY=$OPTARG
+            ;;
+        t)
+            DEVICE_NAME=$OPTARG
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+
+IN_VIDEO=$(get_device_number "$DEVICE_NAME")
+
+# get framerate and resolution
+res_fps=( $(select_available_modes $IN_VIDEO) )
+RESOLUTION=${res_fps[0]}
+FRAMERATE=${res_fps[1]}
 
 # ensure ffmpeg and vlc are installed
 which ffmpeg > /dev/null 2>&1 || ( echo "Please ensure ffmpeg is installed" && exit 1 )
@@ -18,7 +53,14 @@ export vlc="$(find $VLC_SEARCH_DIR -name VLC)"
 test -n $vlc || ( echo "Please ensure VLC is installed" && exit 1 )
 
 # fork ffmpeg (start stream)
-ffmpeg -f avfoundation -framerate 30 -i "${IN_VIDEO}:none" -an -target film-dvd -preset ultrafast -tune zerolatency -f rtp rtp://0.0.0.0:1234 > ffmpeg.log 2>&1 &
+ffmpeg -f avfoundation \
+       -video_size $RESOLUTION \
+       -framerate $FRAMERATE \
+       -i "${IN_VIDEO}${OPT_NO_SOUND}" -an \
+       -target film-dvd \
+       -preset ultrafast \
+       -tune zerolatency \
+       -f rtp rtp://0.0.0.0:1234 > ffmpeg.log 2>&1 &
 trap "cleanup $!" STOP KILL TERM QUIT HUP
 
 # fork vlc (attach to stream with http remote control)

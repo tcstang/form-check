@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+
+# Lists input devices found
+list_devices()
+{
+    ffmpeg -y -f avfoundation -list_devices true -i "" 2>&1 | grep 'AVFoundation input'
+}
+
+# Retrieves the video interface number of requested device
+# 
+# Args:
+#   - All arguments passed will be used as device name
+# 
+# Returns:
+#   - The device number found on the system or 0 (default camera) if nothing is found
+get_device_number()
+{
+    name="$*"
+    device_number=$(list_devices | grep "$name" | head -1 | grep -o '\[\d*\]' | tr -d '[' | tr -d ']')
+    if [[ -z $device_number ]]; then
+        echo "Couldn't find device ${name}, using default camera" >&2
+        device_number=0 
+    fi
+    echo $device_number
+}
+
+# Lists all the supported modes as displayed by ffmpeg
+#
+# Note: this purposely uses an incomplete command to parse the STDERR for the supported modes
+get_supported_modes()
+{
+    arg=$1
+    video_in=${arg:=0}
+    ffmpeg -f avfoundation -i "${video_in}:none" 2>&1 | grep -oE '\d{2,}x\d{2,}@.*fps$' | sort | uniq
+}
+
+# Displays the available modes for the user
+# 
+# Args:
+#   - $1 : the device interface, see list_devices for the device number
+# Return:
+#   - The parsed resolution and framerate respectively
+select_available_modes()
+{
+    device_num=$1
+    set -f
+    IFS=$'\n'
+    modes=( $(printf "%s" "$(get_supported_modes $device_num)") )
+    last_index=$((${#modes[*]}-1))
+    if [[ "$last_index" -gt 0 ]]; then
+        for i in $(seq 0 $last_index); do
+            echo "$i : ${modes[i]}" >&2
+        done
+        message="Please select a mode (number between 0 and $last_index)"
+        echo $message >&2
+        read mode_num
+
+        test $mode_num -ge 0 || ( echo Error! $message >&2 && return 1 )
+        test $mode_num -le ${#modes[*]} || ( echo Error! $message >&2 &&  return 1 )
+    else
+        mode_num=0
+    fi
+    framerate=$(_parse_framerate ${modes[mode_num]})
+    resolution=$(_parse_resolution ${modes[mode_num]})
+    echo $resolution $framerate
+}
+
+_parse_framerate()
+{
+    echo $1 | grep -oE '\d{1,3}\.\d+' | head -1
+}
+
+_parse_resolution()
+{
+    echo $1 | grep -Eo '\d{2,}x\d{2,}'
+}
